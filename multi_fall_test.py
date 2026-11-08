@@ -5,6 +5,7 @@ import math
 import time
 import queue
 import uuid
+import subprocess
 from pathlib import Path
 from collections import deque
 from audio_test import start_voice_check
@@ -208,7 +209,7 @@ with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
                         )
                         event["notified"] = True
                         dashboard.event("caregiver_alert", event_id=event["event_id"], person_id=person_id, reason="Voice requested help")
-
+                        subprocess.Popen(["powershell.exe", "-NoProfile", "-Command", "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('Contacting caregivers. This is a demonstration.')"])
         eligible_people = [
             person_id for person_id in alerts
             if person_id not in audio_attempted
@@ -242,6 +243,7 @@ with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
                     print(f"DEMO caregiver alert: Person {person_id}, {event['reason']}")
                     event["notified"] = True
                     dashboard.event("caregiver_alert", event_id=event["event_id"], person_id=person_id, reason="No confirmed response within ten seconds")
+                    subprocess.Popen(["powershell.exe", "-NoProfile", "-Command", "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('Contacting caregivers. This is a demonstration.')"])
             if alert["notified"]:
                 cv2.putText(frame, "DEMO: CAREGIVER ALERT", (10, 175),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2)
