@@ -82,10 +82,11 @@ function renderIncidents(incidents) {
     const status = document.createElement("span");
     const statusText = incident.status === "active"
       ? "Needs attention"
-      : incident.status === "acknowledged"
-        ? "Acknowledged"
-        : "Recorded";
-    status.className = `incident-status${incident.status === "active" ? " is-active" : incident.status === "acknowledged" ? " is-acknowledged" : ""}`;
+      : incident.status === "escalated" ? "Demo escalation"
+      : incident.status === "acknowledged" ? "Acknowledged"
+      : incident.status === "resolved" ? "Resolved"
+      : "Recorded";
+    status.className = `incident-status${(incident.status === "active" || incident.status === "escalated") ? " is-active" : incident.status === "acknowledged" ? " is-acknowledged" : ""}`;
     status.textContent = statusText;
     row.append(icon, main, status);
     incidentList.append(row);
@@ -97,9 +98,12 @@ function renderState(state) {
   const monitoringActive = state.monitoring_status === "active";
   document.getElementById("camera-status").textContent = cameraOnline ? "Online" : "Offline";
   document.getElementById("camera-indicator").style.background = cameraOnline ? "#2da47b" : "#c9373b";
-  document.getElementById("monitor-status").textContent = monitoringActive ? "Active" : "Paused";
+  document.getElementById("monitor-status").textContent = monitoringActive ? "Active" : "Not connected";
+  document.getElementById("camera-detail").textContent = cameraOnline ? `${state.people_visible ?? 0} person(s) visible · Raspberry Pi` : "Waiting for detector heartbeat";
+  document.getElementById("monitor-detail").textContent = monitoringActive ? "Fall detection process running" : "Start detector on this laptop";
+  document.getElementById("connection-indicator").style.background = monitoringActive ? "#2ca47e" : "#c28b29";
   document.getElementById("monitor-indicator").style.background = monitoringActive ? "#2da47b" : "#c28b29";
-  document.getElementById("data-mode").textContent = state.demo_mode ? "DEMO DATA" : "DETECTOR EVENT";
+  document.getElementById("data-mode").textContent = state.demo_mode ? "DEMO DATA" : "PROTOTYPE · LIVE INPUT";
   document.getElementById("last-updated").textContent = formatClock(state.server_time);
   document.getElementById("current-date").textContent = new Intl.DateTimeFormat(undefined, {
     weekday: "long",
@@ -110,12 +114,12 @@ function renderState(state) {
   const alert = state.active_alert;
   alertPanel.hidden = !alert;
   alertPanel.classList.toggle("is-acknowledged", Boolean(alert && alert.status === "acknowledged"));
-  safetyCard.classList.toggle("is-alert", Boolean(alert && alert.status === "active"));
+  safetyCard.classList.toggle("is-alert", Boolean(alert && (alert.status === "active" || alert.status === "escalated")));
   safetyCard.classList.toggle("is-acknowledged", Boolean(alert && alert.status === "acknowledged"));
   if (!alert) {
-    document.getElementById("safety-status").textContent = "All clear";
-    document.getElementById("safety-detail").textContent = "No active fall alerts";
-  } else if (alert.status === "active") {
+    document.getElementById("safety-status").textContent = monitoringActive ? "No active alerts" : "Not connected";
+    document.getElementById("safety-detail").textContent = monitoringActive ? "No fall alerts currently recorded" : "Start the detector to enable monitoring";
+  } else if (alert.status !== "acknowledged") {
     document.getElementById("safety-status").textContent = "Fall reported";
     document.getElementById("safety-detail").textContent = "Caregiver attention needed";
   } else {
@@ -125,15 +129,14 @@ function renderState(state) {
 
   if (alert) {
     document.getElementById("alert-kicker").textContent =
-      alert.status === "active" ? "IMMEDIATE ATTENTION" : "CAREGIVER ACKNOWLEDGED";
+      alert.status === "acknowledged" ? "CAREGIVER ACKNOWLEDGED" : alert.status === "escalated" ? "DEMO ESCALATION" : "POSSIBLE FALL";
     document.getElementById("alert-title").textContent =
-      alert.status === "active" ? "Fall detected" : "Alert acknowledged";
+      alert.status === "acknowledged" ? "Alert acknowledged" : alert.status === "escalated" ? "Caregiver attention needed" : "Possible fall detected";
     document.getElementById("alert-description").textContent =
-      alert.status === "active"
-        ? "A potential fall was reported. Please check in with the person."
-        : "This alert was acknowledged. The fall report remains in incident history.";
+      alert.status === "acknowledged" ? "An acknowledgement was recorded. Please still check on the person."
+      : `${alert.person_id ? `Person ${alert.person_id}: ` : ""}${alert.reason || "Possible fall"}. ${alert.status === "escalated" ? "Simulated caregiver alert only. No call or text sent." : "Checking for a voice response..."}`;
     document.getElementById("alert-time").textContent = formatTime(alert.timestamp);
-    acknowledgeButton.disabled = alert.status !== "active";
+    acknowledgeButton.disabled = alert.status === "acknowledged";
   }
   renderIncidents(state.incidents);
 }

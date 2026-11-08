@@ -4,9 +4,11 @@ import numpy as np
 import math
 import time
 import queue
+import uuid
 from pathlib import Path
 from collections import deque
 from audio_test import start_voice_check
+from dashboard.bridge import DashboardBridge
 
 # Same Raspberry Pi camera stream you already use
 URL = "tcp://100.82.46.93:8888"
@@ -28,6 +30,7 @@ options = mp.tasks.vision.PoseLandmarkerOptions(
 tracks = {}
 next_id = 1
 alerts = {}
+dashboard = DashboardBridge()
 audio_results = queue.Queue()
 audio_thread = None
 audio_person_id = None
@@ -43,7 +46,9 @@ colors = [(0, 255, 0), (255, 180, 0), (255, 0, 255)]
 
 def alert_person(person_id, reason, now):
     if person_id not in alerts:
-        alerts[person_id] = {"since": now, "reason": reason, "notified": False}
+        event_id = uuid.uuid4().hex
+        alerts[person_id] = {"since": now, "reason": reason, "notified": False, "event_id": event_id}
+        dashboard.event("fall_detected", event_id=event_id, person_id=person_id, reason=reason, demo=(reason == "Manual test"))
         print(f"ALERT: Person {person_id}: {reason}")
 
 
@@ -59,6 +64,7 @@ with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
         ok, frame = camera.read()
         if not ok:
             print("Video disconnected")
+            dashboard.heartbeat(camera_online=False, monitoring_active=False, force=True)
             break
         now = time.monotonic()
         h, w = frame.shape[:2]
@@ -78,6 +84,9 @@ with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
             hy = (pose[23].y + pose[24].y) / 2
             tilt = math.degrees(math.atan2(abs(hx - sx), abs(hy - sy) + 0.000001))
             people.append((pose, hx, hy, tilt))
+
+        # Report live status without slowing down frame processing.
+        dashboard.heartbeat(visible_people=len(people))
 
         # Associate new detections with existing people by hip position.
         # This is approximate tracking, not facial recognition or persistent identity.
@@ -180,7 +189,8 @@ with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
                     and result_text.startswith("PERSON IS SAFE")
                     and person_id in alerts
                 ):
-                    alerts.pop(person_id)
+                    resolved_alert = alerts.pop(person_id)
+                    dashboard.event("person_safe", event_id=resolved_alert["event_id"], person_id=person_id, reason="Confirmed by voice")
                     audio_attempted.discard(person_id)
                     if person_id in tracks:
                         tracks[person_id]["dismiss_until"] = now + 20
@@ -197,6 +207,7 @@ with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
                             f"{event['reason']} (voice requested help)"
                         )
                         event["notified"] = True
+                        dashboard.event("caregiver_alert", event_id=event["event_id"], person_id=person_id, reason="Voice requested help")
 
         eligible_people = [
             person_id for person_id in alerts
@@ -230,6 +241,7 @@ with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
                 if now - event["since"] >= ALERT_SECONDS and not event["notified"]:
                     print(f"DEMO caregiver alert: Person {person_id}, {event['reason']}")
                     event["notified"] = True
+                    dashboard.event("caregiver_alert", event_id=event["event_id"], person_id=person_id, reason="No confirmed response within ten seconds")
             if alert["notified"]:
                 cv2.putText(frame, "DEMO: CAREGIVER ALERT", (10, 175),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2)
@@ -249,11 +261,15 @@ with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
                 track["lying_since"] = None
                 track["motion_since"] = None
                 track["history"].clear()
+            for person_id, event in list(alerts.items()):
+                dashboard.event("manual_clear", event_id=event["event_id"], person_id=person_id, reason="Cleared with C key")
             alerts.clear()
             audio_attempted.clear()
             audio_person_id = None
             audio_status = "Alerts cleared"
             print("All alerts cleared (20-second demo cooldown)")
 
+dashboard.heartbeat(camera_online=False, monitoring_active=False, force=True)
+dashboard.close()
 camera.release()
 cv2.destroyAllWindows()

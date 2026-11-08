@@ -37,8 +37,8 @@
             <p class="page-subtitle">A clear view of the things that matter most.</p>
           </div>
           <div class="heading-date">
-            <span class="live-indicator"></span>
-            <span>Live dashboard</span>
+            <span class="live-indicator" id="connection-indicator"></span>
+            <span>Prototype live session</span>
             <span class="date-divider">·</span>
             <time id="current-date">Loading date...</time>
           </div>
@@ -52,7 +52,7 @@
             <div class="status-info">
               <span class="status-label">Camera</span>
               <strong class="status-value"><span id="camera-indicator" class="small-indicator"></span><span id="camera-status">Connecting</span></strong>
-              <span class="status-detail">Living room · Raspberry Pi</span>
+              <span class="status-detail" id="camera-detail">Waiting for detector heartbeat</span>
             </div>
             <span class="card-chevron" aria-hidden="true">›</span>
           </article>
@@ -63,7 +63,7 @@
             <div class="status-info">
               <span class="status-label">Monitoring</span>
               <strong class="status-value"><span id="monitor-indicator" class="small-indicator"></span><span id="monitor-status">Connecting</span></strong>
-              <span class="status-detail">Fall detection enabled</span>
+              <span class="status-detail" id="monitor-detail">Start detector on this laptop</span>
             </div>
             <span class="card-chevron" aria-hidden="true">›</span>
           </article>
