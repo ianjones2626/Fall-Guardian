@@ -6,11 +6,15 @@ import subprocess
 import threading
 import time
 
-import pyaudio
+try:
+    import pyaudio
+except ImportError:
+    import pyaudiowpatch as pyaudio
+
 import speech_recognition as sr
 
 MICROPHONE_DEVICE_INDEX = 1
-CHANNELS = 4
+CHANNELS = 1
 SAMPLE_RATE = 44100
 CHUNK_SIZE = 1024
 RECORD_SECONDS = 5
