@@ -1,7 +1,9 @@
 import array
 import math
+import queue
 import re
 import subprocess
+import threading
 import time
 
 import pyaudio
@@ -25,14 +27,14 @@ def speak_prompt():
             (
                 "Add-Type -AssemblyName System.Speech; "
                 "$voice = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                "$voice.Speak('Are you okay?')"
+                "$voice.Speak('A possible fall has been detected. Are you okay?')"
             ),
         ],
         check=True,
     )
 
 
-def record_mono_audio():
+def record_mono_audio(countdown_seconds=3):
     audio_interface = pyaudio.PyAudio()
     stream = None
     try:
@@ -63,8 +65,7 @@ def record_mono_audio():
         )
 
         print("Get ready to answer: I'm okay, Yes, Help me, or No.")
-        input("Press Enter when ready; speak as soon as the countdown starts: ")
-        for seconds_left in (3, 2, 1):
+        for seconds_left in range(countdown_seconds, 0, -1):
             print(f"Listening starts in {seconds_left}...")
             time.sleep(1)
         print(f"LISTENING NOW: speak for up to {RECORD_SECONDS} seconds.")
@@ -104,18 +105,21 @@ def classify_response(response):
     words = set(re.findall(r"[a-z']+", response.lower()))
     if "help" in words or "no" in words:
         return "HELP REQUESTED - simulated caregiver alert"
-    if "okay" in words or "ok" in words or "yes" in words:
+    positive_words = {"okay", "ok", "yes", "yeah", "yep", "yup"}
+    if "not" in words and positive_words.intersection(words):
+        return "HELP REQUESTED - simulated caregiver alert"
+    if positive_words.intersection(words):
         return "PERSON IS SAFE - confirmed by voice"
     return "NO CONFIRMED RESPONSE - unclear words"
 
 
-def main():
+def perform_voice_check(countdown_seconds=3):
     speak_prompt()
-    audio_data, rms = record_mono_audio()
+    audio_data, rms = record_mono_audio(countdown_seconds)
 
     if rms < 30:
         print("No speech-level audio detected; no confirmed response.")
-        return
+        return "no_response", "", "NO CONFIRMED RESPONSE - no speech detected"
 
     recognizer = sr.Recognizer()
     print("Sending the mono recording to speech recognition...")
@@ -124,14 +128,37 @@ def main():
             audio_data, language="en-US"
         )
     except sr.UnknownValueError:
-        print("Speech was unclear. NO CONFIRMED RESPONSE.")
-        return
+        return "unclear", "", "NO CONFIRMED RESPONSE - speech was unclear"
     except sr.RequestError as error:
-        print(f"Speech recognition service/network error: {error}")
-        return
+        return "error", "", f"Speech recognition service/network error: {error}"
 
-    print(f"Recognized words: {response}")
-    print(f"Result: {classify_response(response)}")
+    return "recognized", response, classify_response(response)
+
+
+def _voice_check_worker(results):
+    try:
+        results.put(perform_voice_check(countdown_seconds=0))
+    except Exception as error:
+        results.put(("error", "", f"Audio check failed: {error}"))
+
+
+def start_voice_check(results):
+    thread = threading.Thread(
+        target=_voice_check_worker,
+        args=(results,),
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def main():
+    status, response, result = perform_voice_check()
+    if response:
+        print(f"Recognized words: {response}")
+    print(f"Result: {result}")
+    if status == "error":
+        print("Audio test did not complete successfully.")
 
 
 if __name__ == "__main__":

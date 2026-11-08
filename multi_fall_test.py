@@ -3,8 +3,10 @@ import mediapipe as mp
 import numpy as np
 import math
 import time
+import queue
 from pathlib import Path
 from collections import deque
+from audio_test import start_voice_check
 
 # Same Raspberry Pi camera stream you already use
 URL = "tcp://100.82.46.93:8888"
@@ -26,6 +28,11 @@ options = mp.tasks.vision.PoseLandmarkerOptions(
 tracks = {}
 next_id = 1
 alerts = {}
+audio_results = queue.Queue()
+audio_thread = None
+audio_person_id = None
+audio_attempted = set()
+audio_status = "Waiting for a fall alert"
 connections = [
     (11, 12), (11, 13), (13, 15), (12, 14), (14, 16),
     (11, 23), (12, 24), (23, 24), (23, 25), (25, 27),
@@ -45,6 +52,7 @@ if not camera.isOpened():
     raise SystemExit("Camera unavailable. Check the Pi stream and try again.")
 
 print("Multiplayer Fall Guardian running. F = test, C = clear alerts, Q = quit")
+print("A fall alert speaks and listens; press C to clear manually.")
 
 with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
     while True:
@@ -154,6 +162,58 @@ with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
             if now - tracks[track_id]["last_seen"] > 2.0:
                 del tracks[track_id]
 
+        if audio_person_id is not None:
+            try:
+                voice_status, response, result_text = audio_results.get_nowait()
+            except queue.Empty:
+                pass
+            else:
+                person_id = audio_person_id
+                audio_person_id = None
+                audio_status = result_text
+                if response:
+                    print(f"Voice response for Person {person_id}: {response}")
+                print(f"Voice result: {result_text}")
+
+                if (
+                    voice_status == "recognized"
+                    and result_text.startswith("PERSON IS SAFE")
+                    and person_id in alerts
+                ):
+                    alerts.pop(person_id)
+                    audio_attempted.discard(person_id)
+                    if person_id in tracks:
+                        tracks[person_id]["dismiss_until"] = now + 20
+                    print(f"Person {person_id} confirmed safe by voice")
+                elif (
+                    voice_status == "recognized"
+                    and result_text.startswith("HELP REQUESTED")
+                    and person_id in alerts
+                ):
+                    event = alerts[person_id]
+                    if not event["notified"]:
+                        print(
+                            f"DEMO caregiver alert: Person {person_id}, "
+                            f"{event['reason']} (voice requested help)"
+                        )
+                        event["notified"] = True
+
+        eligible_people = [
+            person_id for person_id in alerts
+            if person_id not in audio_attempted
+        ]
+        if (
+            audio_person_id is None
+            and eligible_people
+            and (audio_thread is None or not audio_thread.is_alive())
+        ):
+            while not audio_results.empty():
+                audio_results.get_nowait()
+            audio_person_id = eligible_people[0]
+            audio_attempted.add(audio_person_id)
+            audio_status = f"Asking Person {audio_person_id} by voice..."
+            audio_thread = start_voice_check(audio_results)
+
         cv2.putText(frame, f"People visible: {len(people)}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         if alerts:
@@ -164,12 +224,14 @@ with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
             cv2.putText(frame, f"Are you okay? Press C | {remaining}s", (10, 105),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            cv2.putText(frame, f"Voice: {audio_status[:45]}", (10, 140),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
             for person_id, event in alerts.items():
                 if now - event["since"] >= ALERT_SECONDS and not event["notified"]:
                     print(f"DEMO caregiver alert: Person {person_id}, {event['reason']}")
                     event["notified"] = True
             if alert["notified"]:
-                cv2.putText(frame, "DEMO: CAREGIVER ALERT", (10, 140),
+                cv2.putText(frame, "DEMO: CAREGIVER ALERT", (10, 175),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2)
 
         cv2.imshow("Fall Guardian - Multiple People", frame)
@@ -188,6 +250,9 @@ with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
                 track["motion_since"] = None
                 track["history"].clear()
             alerts.clear()
+            audio_attempted.clear()
+            audio_person_id = None
+            audio_status = "Alerts cleared"
             print("All alerts cleared (20-second demo cooldown)")
 
 camera.release()
